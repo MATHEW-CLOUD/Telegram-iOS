@@ -9,6 +9,7 @@ import ChatPresentationInterfaceState
 import ComponentFlow
 import AccountContext
 import AnimatedCountLabelNode
+import TelegramUI
 
 final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessageActionSheetControllerSourceSendButtonNode {
     private let strings: PresentationStrings
@@ -21,6 +22,10 @@ final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessage
     var animatingSendButton = false
     let textNode: ImmediateAnimatedCountLabelNode
     let iconNode: ASImageNode
+    // LIQUID GLASS
+    let sendIconLensContent: ASDisplayNode
+    let sendIconLens: LiquidGlassLensN
+
     
     private var theme: PresentationTheme
 
@@ -57,6 +62,14 @@ final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessage
         self.iconNode = ASImageNode()
         self.iconNode.displaysAsynchronously = false
         
+        // LIQUID GLASS (create the lens)
+        // content node will hold only the icon (so text stays crisp)
+        self.sendIconLensContent = ASDisplayNode()
+        self.sendIconLensContent.isUserInteractionEnabled = false
+        
+        self.sendIconLens = LiquidGlassLensNode()
+        self.sendIconLens.isUserInteractionEnabled = false
+
         super.init()
         
         self.isAccessibilityElement = true
@@ -82,6 +95,15 @@ final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessage
                     }
                 }
             }
+            
+            // LIQUID GLASS — apply highlight + motion to the icon lens
+            if highlighted {
+                self.sendIconLens.setHighlighted(true, animated: true)
+                LiquidGlassAnimator.press(self.sendIconLens)
+            } else {
+                self.sendIconLens.setHighlighted(false, animated: true)
+                LiquidGlassAnimator.release(self.sendIconLens)
+            }                          
         }
         
         self.addSubnode(self.sendContainerNode)
@@ -89,6 +111,10 @@ final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessage
         self.sendContainerNode.addSubnode(self.sendButton)
         self.sendContainerNode.addSubnode(self.textNode)
         self.backgroundNode.addSubnode(self.iconNode)
+        self.backgroundNode.addSubnode(self.sendIconLens)
+        self.sendIconLens.contentNode.addSubnode(self.sendIconLensContent)
+        self.sendIconLensContent.addSubnode(self.iconNode
+
     }
     
     override func didLoad() {
@@ -180,8 +206,21 @@ final class AttachmentTextInputActionButtonsNode: ASDisplayNode, ChatSendMessage
         self.backgroundNode.cornerRadius = backgroundSize.height / 2.0
         
         if let iconSize = self.iconNode.image?.size {
-            transition.updateFrame(node: self.iconNode, frame: CGRect(origin: CGPoint(x: floorToScreenPixels((backgroundSize.width - iconSize.width) / 2.0), y: floorToScreenPixels((backgroundSize.height - iconSize.height) / 2.0)), size: iconSize))
-        }
+           
+        transition.updateFrame(node: self.iconNode, frame: iconFrame)
+            
+                // LIQUID GLASS — lens follows the icon; circular mask; then refresh
+                // place lens within the background pill, at the icon’s frame
+                transition.updateFrame(node: self.sendIconLens, frame: iconFrame)
+                transition.updateFrame(node: self.sendIconLensContent, frame: iconFrame)
+                self.sendIconLens.maskPath = UIBezierPath(ovalIn: self.sendIconLens.bounds)
+            
+                // Hide lens when the icon is hidden (e.g., star text mode)
+                self.sendIconLens.isHidden = self.iconNode.isHidden
+            
+                // Snapshot only once per layout pass (blur only icon content)
+                self.sendIconLens.refresh()
+            }
         
         return buttonSize
     }
