@@ -8,6 +8,7 @@ import MultilineTextWithEntitiesComponent
 import TextFormat
 import AccountContext
 import TelegramPresentationData
+import TelegramUI
 
 public final class TabSelectorComponent: Component {
     public enum Style {
@@ -373,6 +374,11 @@ public final class TabSelectorComponent: Component {
         private weak var state: EmptyComponentState?
         
         private let selectionView: UIImageView
+        
+    // LIQUID GLASS — lens that wraps the moving pill
+        private let selectionLens: LiquidGlassLensNode
+        private let selectionLensContent: ASDisplayNode
+        private var visibleItems: [AnyHashable: VisibleItem] = [:
         private var visibleItems: [AnyHashable: VisibleItem] = [:]
         
         private var didInitiallyScroll = false
@@ -384,6 +390,12 @@ public final class TabSelectorComponent: Component {
         override init(frame: CGRect) {
             self.selectionView = UIImageView()
             
+            // LIQUID GLASS
+            self.selectionLens = LiquidGlassLensNode()
+            self.selectionLens.isUserInteractionEnabled = false
+            self.selectionLensContent = ASDisplayNode()
+            self.selectionLensContent.isUserInteractionEnabled = fal
+
             super.init(frame: frame)
             
             self.showsVerticalScrollIndicator = false
@@ -395,7 +407,10 @@ public final class TabSelectorComponent: Component {
             self.alwaysBounceVertical = false
             self.clipsToBounds = false
             
-            self.addSubview(self.selectionView)
+            self.addSubview(self.selectionLens.view)
+            self.selectionLens.contentNode.addSubnode(self.selectionLensContent)
+            self.selectionLensContent.view.addSubview(self.selectionView)
+
             
             let reorderRecognizer = ReorderGestureRecognizer(
                 shouldBegin: { [weak self] point in
@@ -770,17 +785,31 @@ public final class TabSelectorComponent: Component {
                     transition.setPosition(view: self.selectionView, position: mappedSelectionFrame.center)
                     transition.setBounds(view: self.selectionView, bounds: CGRect(origin: CGPoint(), size: mappedSelectionFrame.size))
                     transition.setTransform(view: self.selectionView, transform: CATransform3DIdentity)
+            // LIQUID GLASS — lens follows the line indicator
+                    transition.setFrame(view: self.selectionLens.view, frame: mappedSelectionFrame)
+                    self.selectionLensContent.frame = CGRect(origin: .zero, size: mappedSelectionFrame.size)
+                    self.selectionLens.maskPath = UIBezierPath(roundedRect: self.selectionLens.bounds, cornerRadius: mappedSelectionFrame.height / 2.0)
+                    self.selectionLens.refresh()
                 } else {
                     transition.setPosition(view: self.selectionView, position: selectedBackgroundRect.center)
-                    transition.setBounds(view: self.selectionView, bounds: CGRect(origin: CGPoint(), size: selectedBackgroundRect.size))
+                    transition.setBounds(view: self.selectionView, bounds: CGRect(origin: .zero, size: selectedBackgroundRect.size))
                     if selectedItemIsReordering {
                         transition.setTransform(view: self.selectionView, transform: CATransform3DMakeScale(1.1, 1.1, 1.0))
                     } else {
                         transition.setTransform(view: self.selectionView, transform: CATransform3DIdentity)
                     }
+            
+                    // LIQUID GLASS — lens wraps the pill (rounded-rect mask)
+                    transition.setFrame(view: self.selectionLens.view, frame: selectedBackgroundRect)
+                    self.selectionLensContent.frame = CGRect(origin: .zero, size: selectedBackgroundRect.size)
+                    self.selectionLens.maskPath = UIBezierPath(roundedRect: self.selectionLens.bounds, cornerRadius: selectedBackgroundRect.height / 2.0)
+                    self.selectionLens.refresh()
                 }
             } else {
                 self.selectionView.alpha = 0.0
+                // LIQUID GLASS — mirror visibility
+                self.selectionLens.view.alpha = 0.0
+}
             }
             
             let contentSize = CGSize(width: contentWidth, height: baseHeight + verticalInset * 2.0)
