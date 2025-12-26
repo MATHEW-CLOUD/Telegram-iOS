@@ -7,6 +7,7 @@ import UIKitRuntimeUtils
 import AnimatedStickerNode
 import TelegramAnimatedStickerNode
 import TelegramPresentationData
+import TelegramUI
 
 private extension CGRect {
     var center: CGPoint {
@@ -97,6 +98,8 @@ private final class TabBarItemNode: ASDisplayNode {
     let textImageNode: ASImageNode
     let contextImageNode: ASImageNode
     let contextTextImageNode: ASImageNode
+    let lensContentNode: ASDisplayNode
+    let liquidLensNode: LiquidGlassLensNode
     var contentWidth: CGFloat?
     var isSelected: Bool = false
     
@@ -154,18 +157,31 @@ private final class TabBarItemNode: ASDisplayNode {
         self.contextTextImageNode.displaysAsynchronously = false
         self.contextTextImageNode.isAccessibilityElement = false
         self.contextTextImageNode.alpha = 0.0
+        self.lensContentNode = ASDisplayNode()
+        self.lensContentNode.isUserInteractionEnabled = false
         
+        self.liquidLensNode = LiquidGlassLensNode()
+        self.liquidLensNode.isUserInteractionEnabled = false
         super.init()
         
         self.isAccessibilityElement = true
         
         self.extractedContainerNode.contentNode.addSubnode(self.ringImageNode)
-        self.extractedContainerNode.contentNode.addSubnode(self.textImageNode)
-        self.extractedContainerNode.contentNode.addSubnode(self.imageNode)
-        self.extractedContainerNode.contentNode.addSubnode(self.animationContainerNode)
+
+        // LIQUID GLASS: content routed through lens
+        self.lensContentNode.addSubnode(self.textImageNode)
+        self.lensContentNode.addSubnode(self.imageNode)
+        self.lensContentNode.addSubnode(self.animationContainerNode)
         self.animationContainerNode.addSubnode(self.animationNode)
+        
+        // Context visuals stay outside the lens
         self.extractedContainerNode.contentNode.addSubnode(self.contextTextImageNode)
         self.extractedContainerNode.contentNode.addSubnode(self.contextImageNode)
+        
+        // Mount lens
+        self.extractedContainerNode.contentNode.addSubnode(self.liquidLensNode)
+        self.liquidLensNode.contentNode.addSubnode(self.lensContentNode)
+
         self.containerNode.addSubnode(self.extractedContainerNode)
         self.containerNode.targetNodeForActivationProgress = self.extractedContainerNode.contentNode
         self.addSubnode(self.containerNode)
@@ -175,11 +191,13 @@ private final class TabBarItemNode: ASDisplayNode {
                 return
             }
             transition.updateAlpha(node: strongSelf.ringImageNode, alpha: isExtracted ? 0.0 : 1.0)
-            transition.updateAlpha(node: strongSelf.imageNode, alpha: isExtracted ? 0.0 : 1.0)
-            transition.updateAlpha(node: strongSelf.animationNode, alpha: isExtracted ? 0.0 : 1.0)
-            transition.updateAlpha(node: strongSelf.textImageNode, alpha: isExtracted ? 0.0 : 1.0)
+            // LIQUID GLASS: content stays visible inside lens
+            transition.updateAlpha(node: strongSelf.imageNode, alpha: 1.0)
+            transition.updateAlpha(node: strongSelf.animationNode, alpha: 1.0)
+            transition.updateAlpha(node: strongSelf.textImageNode, alpha: 1.0)                                                                 
             transition.updateAlpha(node: strongSelf.contextImageNode, alpha: isExtracted ? 1.0 : 0.0)
             transition.updateAlpha(node: strongSelf.contextTextImageNode, alpha: isExtracted ? 1.0 : 0.0)
+            strongSelf.liquidLensNode.refresh()                                                                    
         }
     }
     
@@ -399,18 +417,50 @@ class TabBarNode: ASDisplayNode, ASGestureRecognizerDelegate {
     }
     
     @objc private func tapLongTapOrDoubleTapGesture(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
-        switch recognizer.state {
-        case .ended:
-            if let (gesture, location) = recognizer.lastRecognizedGestureAndLocation {
-                if case .tap = gesture {
-                    self.tapped(at: location, longTap: false)
+        
+            switch recognizer.state {
+            case .began:
+                if let (_, location) = recognizer.lastRecognizedGestureAndLocation,
+                   let nearest = self.nearestTabIndex(to: location) {
+                    let node = self.tabBarNodeContainers[nearest].imageNode
+                    LiquidGlassAnimator.press(node.liquidLensNode)
                 }
+            case .ended:
+                if let (gesture, location) = recognizer.lastRecognizedGestureAndLocation {
+                    if case .tap = gesture {
+                        self.tapped(at: location, longTap: false)
+                    }
+                }
+                if let nearest = self.nearestTabIndex(to: recognizer.location(in: self.view)) {
+                    let node = self.tabBarNodeContainers[nearest].imageNode
+                    LiquidGlassAnimator.release(node.liquidLensNode)
+                }
+            default:
+                break
             }
-        default:
-            break
-        }
     }
-    
+    // LIQUID GLASS: helper — find nearest tab under a given point
+    private func nearestTabIndex(to location: CGPoint) -> Int? {
+        if let bottomInset = self.validLayout?.4,
+           location.y > self.bounds.size.height - bottomInset {
+            return nil
+        }
+        var closest: (Int, CGFloat)?
+        for i in 0 ..< self.tabBarNodeContainers.count {
+            let node = self.tabBarNodeContainers[i].imageNode
+            if !node.isUserInteractionEnabled { continue }
+            let distance = abs(location.x - node.position.x)
+            if let prev = closest {
+                if prev.1 > distance {
+                    closest = (i, distance)
+                }
+            } else {
+                closest = (i, distance)
+            }
+        }
+        return closest?.0
+    }
+
     func updateTheme(_ theme: PresentationTheme) {
         if self.theme !== theme {
             self.theme = theme
@@ -741,7 +791,18 @@ class TabBarNode: ASDisplayNode, ASGestureRecognizerDelegate {
                     node.imageNode.bounds = CGRect(origin: CGPoint(), size: imageFrame.size)
                     node.imageNode.position = imageFrame.center
                 }
+                                // LIQUID GLASS: layout & refresh
+                node.liquidLensNode.frame = node.extractedContainerNode.contentNode.bounds
+                node.lensContentNode.frame = node.extractedContainerNode.contentNode.bounds
                 
+                if node.ringColor != nil {
+                    node.liquidLensNode.maskPath = UIBezierPath(ovalIn: imageFrame)
+                } else {
+                    node.liquidLensNode.maskPath = nil
+                }
+                
+                node.liquidLensNode.refresh()
+
                 if container.badgeValue != container.appliedBadgeValue {
                     container.appliedBadgeValue = container.badgeValue
                     if let badgeValue = container.badgeValue, !badgeValue.isEmpty {
